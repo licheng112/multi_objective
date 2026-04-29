@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import random
@@ -56,6 +57,8 @@ PRIOR_SUFFIXES = [
 POP_SIZE = 140
 GENERATIONS = 500
 SEEDS = [42, 43, 44]
+RUN_MODE = "legacy"
+RESULTS_SUBDIR = "results"
 CONSTRAINT_WEIGHT = 4.5
 DISTURBANCE_SCENARIOS = 9
 DISTURBANCE_LEVEL = 0.075
@@ -67,6 +70,50 @@ BASELINE_IMMIGRANT_END = 0.10
 BASELINE_IMMIGRANT_DECAY_GENERATION = 360
 BASELINE_STATE_REFRESH_START = 0.20
 BASELINE_STATE_REFRESH_END = 0.04
+MOEAD_CONFIGS = {
+    "default": {
+        "neighbors": 20,
+        "immigrant_start": BASELINE_IMMIGRANT_START,
+        "immigrant_end": BASELINE_IMMIGRANT_END,
+        "immigrant_decay_generation": BASELINE_IMMIGRANT_DECAY_GENERATION,
+        "state_refresh_start": BASELINE_STATE_REFRESH_START,
+        "state_refresh_end": BASELINE_STATE_REFRESH_END,
+    },
+    "low_immigrant": {
+        "neighbors": 24,
+        "immigrant_start": 0.25,
+        "immigrant_end": 0.04,
+        "immigrant_decay_generation": 320,
+        "state_refresh_start": 0.12,
+        "state_refresh_end": 0.02,
+    },
+    "large_neighborhood": {
+        "neighbors": 36,
+        "immigrant_start": 0.34,
+        "immigrant_end": 0.06,
+        "immigrant_decay_generation": 360,
+        "state_refresh_start": 0.14,
+        "state_refresh_end": 0.02,
+    },
+    "exploitative": {
+        "neighbors": 32,
+        "immigrant_start": 0.18,
+        "immigrant_end": 0.02,
+        "immigrant_decay_generation": 260,
+        "state_refresh_start": 0.08,
+        "state_refresh_end": 0.01,
+    },
+    "stable_decomposition": {
+        "neighbors": 44,
+        "immigrant_start": 0.10,
+        "immigrant_end": 0.00,
+        "immigrant_decay_generation": 220,
+        "state_refresh_start": 0.04,
+        "state_refresh_end": 0.00,
+    },
+}
+ACTIVE_MOEAD_CONFIG_NAME = "default"
+ACTIVE_MOEAD_CONFIG = MOEAD_CONFIGS[ACTIVE_MOEAD_CONFIG_NAME].copy()
 PRIOR_HALF_WIDTH_RATIO = 0.24
 PRIOR_INITIAL_FRACTION = 0.54
 PRIOR_CENTER_INITIAL_FRACTION = 0.06
@@ -540,6 +587,29 @@ def baseline_state_refresh_fraction(generation: int) -> float:
     return float(BASELINE_STATE_REFRESH_START * (1.0 - progress) + BASELINE_STATE_REFRESH_END * progress)
 
 
+def set_moead_config(name: str) -> None:
+    global ACTIVE_MOEAD_CONFIG_NAME, ACTIVE_MOEAD_CONFIG
+    if name not in MOEAD_CONFIGS:
+        raise ValueError(f"Unknown MOEA/D config: {name}")
+    ACTIVE_MOEAD_CONFIG_NAME = name
+    ACTIVE_MOEAD_CONFIG = MOEAD_CONFIGS[name].copy()
+
+
+def moead_immigrant_fraction(generation: int) -> float:
+    decay = max(float(ACTIVE_MOEAD_CONFIG["immigrant_decay_generation"]), 1.0)
+    progress = min(max(generation / decay, 0.0), 1.0)
+    start = float(ACTIVE_MOEAD_CONFIG["immigrant_start"])
+    end = float(ACTIVE_MOEAD_CONFIG["immigrant_end"])
+    return float(start * (1.0 - progress) + end * progress)
+
+
+def moead_state_refresh_fraction(generation: int) -> float:
+    progress = min(max(generation / GENERATIONS, 0.0), 1.0)
+    start = float(ACTIVE_MOEAD_CONFIG["state_refresh_start"])
+    end = float(ACTIVE_MOEAD_CONFIG["state_refresh_end"])
+    return float(start * (1.0 - progress) + end * progress)
+
+
 def hv_score(ctx: ProblemContext, f_norm: np.ndarray) -> float:
     nd = f_norm[nondominated_indices(f_norm)]
     nd = np.minimum(nd, ctx.ref_point)
@@ -560,6 +630,30 @@ def refresh_baseline_state(
     f_select: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     refresh_count = int(len(x) * baseline_state_refresh_fraction(generation))
+    if refresh_count <= 0:
+        return x, f_raw, f_select
+    replace_ids = rng.choice(len(x), refresh_count, replace=False)
+    x_new = sample_uniform(rng, ctx.x_low, ctx.x_high, refresh_count)
+    f_raw_new = evaluate_objectives(ctx, x_new)
+    f_select_new = selection_objectives(ctx, x_new, f_raw_new)
+    x = x.copy()
+    f_raw = f_raw.copy()
+    f_select = f_select.copy()
+    x[replace_ids] = x_new
+    f_raw[replace_ids] = f_raw_new
+    f_select[replace_ids] = f_select_new
+    return x, f_raw, f_select
+
+
+def refresh_moead_state(
+    ctx: ProblemContext,
+    rng: np.random.Generator,
+    generation: int,
+    x: np.ndarray,
+    f_raw: np.ndarray,
+    f_select: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    refresh_count = int(len(x) * moead_state_refresh_fraction(generation))
     if refresh_count <= 0:
         return x, f_raw, f_select
     replace_ids = rng.choice(len(x), refresh_count, replace=False)
@@ -816,7 +910,8 @@ def run_moead(
     f_select = selection_objectives(ctx, x, f_raw)
     weights = reference_dirs(POP_SIZE, rng)
     dist = np.linalg.norm(weights[:, None, :] - weights[None, :, :], axis=2)
-    neighbors = np.argsort(dist, axis=1)[:, :20]
+    neighbor_count = max(2, min(int(ACTIVE_MOEAD_CONFIG["neighbors"]), POP_SIZE))
+    neighbors = np.argsort(dist, axis=1)[:, :neighbor_count]
     ideal = f_select.min(axis=0)
     history = []
     snapshots = {}
@@ -831,7 +926,7 @@ def run_moead(
         for i in range(POP_SIZE):
             pool = neighbors[i]
             a, b = rng.choice(pool, 2, replace=False)
-            if rng.random() < baseline_immigrant_fraction(gen):
+            if rng.random() < moead_immigrant_fraction(gen):
                 child = sample_uniform(rng, ctx.x_low, ctx.x_high, 1)[0]
             else:
                 child = make_offspring(rng, x[[a, b]], low, high, "MOEA/D", ctx, gen)[0]
@@ -849,7 +944,7 @@ def run_moead(
             x[replace] = children[row_id]
             f_raw[replace] = f_raw_child[row_id]
             f_select[replace] = f_select_child[row_id]
-        x, f_raw, f_select = refresh_baseline_state(ctx, rng, gen, x, f_raw, f_select)
+        x, f_raw, f_select = refresh_moead_state(ctx, rng, gen, x, f_raw, f_select)
         f_report = selection_objectives(ctx, x, f_raw)
         row, snap = history_metrics(ctx, "MOEA/D", seed, gen, f_raw, f_report)
         history.append(row)
@@ -1120,10 +1215,14 @@ def write_report(
 
 def write_config(ctx: ProblemContext, results_dir: Path) -> None:
     config = {
+        "run_mode": RUN_MODE,
         "population_size": POP_SIZE,
         "generations": GENERATIONS,
         "seeds": SEEDS,
         "methods": METHODS,
+        "active_moead_config_name": ACTIVE_MOEAD_CONFIG_NAME,
+        "active_moead_config": ACTIVE_MOEAD_CONFIG,
+        "moead_config_candidates": MOEAD_CONFIGS,
         "target_labels": TARGET_LABELS,
         "target_y": ctx.target_y.tolist(),
         "objective_scale": ctx.objective_scale.tolist(),
@@ -1163,14 +1262,57 @@ def write_config(ctx: ProblemContext, results_dir: Path) -> None:
     )
 
 
-def main() -> None:
-    start = time.time()
-    root = project_root()
-    results_dir = root / "\u4f18\u5316\u6536\u655b\u5bf9\u6bd4" / "results"
-    results_dir.mkdir(parents=True, exist_ok=True)
-    set_seed(42)
-    ctx = build_context(root)
+def configure_mode(mode: str, results_subdir: str | None = None) -> None:
+    global RUN_MODE, RESULTS_SUBDIR, POP_SIZE, GENERATIONS, SEEDS
+    RUN_MODE = mode
+    if mode == "quick":
+        POP_SIZE = 80
+        GENERATIONS = 80
+        SEEDS = [42, 43]
+        RESULTS_SUBDIR = results_subdir or "results_quick"
+    elif mode == "pilot":
+        POP_SIZE = 110
+        GENERATIONS = 220
+        SEEDS = list(range(1001, 1011))
+        RESULTS_SUBDIR = results_subdir or "results_pilot"
+    elif mode == "full30":
+        POP_SIZE = 140
+        GENERATIONS = 500
+        SEEDS = list(range(42, 72))
+        RESULTS_SUBDIR = results_subdir or "results"
+    else:
+        POP_SIZE = 140
+        GENERATIONS = 500
+        SEEDS = [42, 43, 44]
+        RESULTS_SUBDIR = results_subdir or "results"
 
+
+def maybe_load_selected_moead_config(results_dir: Path) -> None:
+    selected_path = results_dir / "selected_baseline_config.json"
+    if not selected_path.exists():
+        return
+    selected = json.loads(selected_path.read_text(encoding="utf-8"))
+    name = selected.get("selected_moead_config")
+    if name in MOEAD_CONFIGS:
+        set_moead_config(name)
+
+
+def collect_reference_front(
+    ctx: ProblemContext,
+    final_sets: dict[str, list[tuple[int, np.ndarray, np.ndarray, np.ndarray]]],
+) -> np.ndarray:
+    all_final_norm_fronts = []
+    for runs in final_sets.values():
+        for _, x_final, f_raw_final, _ in runs:
+            f_report_final = selection_objectives(ctx, x_final, f_raw_final)
+            nd = nondominated_indices(f_report_final)
+            all_final_norm_fronts.append(normalize_objectives(ctx, f_report_final[nd]))
+    ref_candidates = np.vstack(all_final_norm_fronts)
+    return ref_candidates[nondominated_indices(ref_candidates)]
+
+
+def run_formal_experiment(ctx: ProblemContext, root: Path, results_dir: Path) -> None:
+    start = time.time()
     history_frames = []
     snapshots: dict[tuple[str, int, int], np.ndarray] = {}
     final_sets: dict[str, list[tuple[int, np.ndarray, np.ndarray, np.ndarray]]] = {method: [] for method in METHODS}
@@ -1187,14 +1329,7 @@ def main() -> None:
             print(f"finished {method} seed={seed}: avg={hist.iloc[-1]['average_objective']:.6f}")
 
     history = pd.concat(history_frames, ignore_index=True)
-    all_final_norm_fronts = []
-    for runs in final_sets.values():
-        for _, x_final, f_raw_final, _ in runs:
-            f_report_final = selection_objectives(ctx, x_final, f_raw_final)
-            nd = nondominated_indices(f_report_final)
-            all_final_norm_fronts.append(normalize_objectives(ctx, f_report_final[nd]))
-    ref_candidates = np.vstack(all_final_norm_fronts)
-    ref_front_norm = ref_candidates[nondominated_indices(ref_candidates)]
+    ref_front_norm = collect_reference_front(ctx, final_sets)
     history = add_igd_to_history(history, snapshots, ref_front_norm)
     history = add_plot_columns(history)
     metrics, per_seed = aggregate_metrics(ctx, final_sets, history, ref_front_norm)
@@ -1214,10 +1349,146 @@ def main() -> None:
     plot_convergence(history, "igd", "IGD", results_dir / "convergence_curve_igd")
     write_report(ctx, metrics, per_seed, time.time() - start, results_dir)
     write_config(ctx, results_dir)
-    refresh_script = root / "\u4f18\u5316\u6536\u655b\u5bf9\u6bd4" / "refresh_convergence_outputs.py"
-    if refresh_script.exists():
-        runpy.run_path(str(refresh_script), run_name="__main__")
+
+    analysis_script = root / "\u4f18\u5316\u6536\u655b\u5bf9\u6bd4" / "reviewer_robustness_analysis.py"
+    if analysis_script.exists():
+        namespace = runpy.run_path(str(analysis_script))
+        namespace["analyze_results"](results_dir)
+
+    if results_dir.name == "results":
+        refresh_script = root / "\u4f18\u5316\u6536\u655b\u5bf9\u6bd4" / "refresh_convergence_outputs.py"
+        if refresh_script.exists():
+            runpy.run_path(str(refresh_script), run_name="__main__")
     print("All outputs written to", results_dir)
+
+
+def run_moead_sensitivity(ctx: ProblemContext, results_dir: Path) -> str:
+    results_dir.mkdir(parents=True, exist_ok=True)
+    start = time.time()
+    history_frames = []
+    snapshots: dict[tuple[str, int, int], np.ndarray] = {}
+    final_sets: dict[str, list[tuple[int, np.ndarray, np.ndarray, np.ndarray]]] = {}
+
+    for config_name in MOEAD_CONFIGS:
+        set_moead_config(config_name)
+        label = f"MOEA/D::{config_name}"
+        final_sets[label] = []
+        print(f"Running MOEA/D sensitivity config={config_name} ...")
+        for seed in SEEDS:
+            hist, snaps, x_final, f_raw_final, f_select_final = run_moead(ctx, seed)
+            hist = hist.copy()
+            hist["method"] = label
+            history_frames.append(hist)
+            for (method, snap_seed, gen), snap in snaps.items():
+                snapshots[(label, snap_seed, gen)] = snap
+            final_sets[label].append((seed, x_final, f_raw_final, f_select_final))
+            print(f"finished {label} seed={seed}: avg={hist.iloc[-1]['average_objective']:.6f}")
+
+    history = pd.concat(history_frames, ignore_index=True)
+    ref_front_norm = collect_reference_front(ctx, final_sets)
+    history = add_igd_to_history(history, snapshots, ref_front_norm)
+    final_rows = history[history["generation"] == GENERATIONS].copy()
+    rows = []
+    for label, group in final_rows.groupby("method"):
+        config_name = label.split("::", 1)[1]
+        rows.append(
+            {
+                "config": config_name,
+                "average_objective_mean": float(group["average_objective"].mean()),
+                "average_objective_std": float(group["average_objective"].std(ddof=1)),
+                "hv_mean": float(group["hv"].mean()),
+                "hv_std": float(group["hv"].std(ddof=1)),
+                "igd_mean": float(group["igd"].mean()),
+                "igd_std": float(group["igd"].std(ddof=1)),
+                "runs": int(group["seed"].nunique()),
+            }
+        )
+    summary = pd.DataFrame(rows)
+    summary["rank_average_objective"] = summary["average_objective_mean"].rank(method="min")
+    summary["rank_hv"] = (-summary["hv_mean"]).rank(method="min")
+    summary["rank_igd"] = summary["igd_mean"].rank(method="min")
+    summary["selection_score"] = summary[["rank_average_objective", "rank_hv", "rank_igd"]].mean(axis=1)
+    summary = summary.sort_values(["selection_score", "igd_mean", "average_objective_mean"]).reset_index(drop=True)
+    selected_name = str(summary.iloc[0]["config"])
+
+    final_rows.assign(config=final_rows["method"].str.split("::").str[1]).to_csv(
+        results_dir / "baseline_sensitivity_runs.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    summary.to_csv(results_dir / "baseline_sensitivity_summary.csv", index=False, encoding="utf-8-sig")
+    selected_payload = {
+        "selected_moead_config": selected_name,
+        "selected_config": MOEAD_CONFIGS[selected_name],
+        "selection_rule": "Lowest mean rank across final Average objective, HV, and IGD on pilot seeds.",
+        "pilot_seeds": SEEDS,
+        "pilot_generations": GENERATIONS,
+        "elapsed_seconds": round(time.time() - start, 2),
+    }
+    (results_dir / "selected_baseline_config.json").write_text(
+        json.dumps(selected_payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    set_moead_config(selected_name)
+    print(f"Selected MOEA/D config: {selected_name}")
+    return selected_name
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run KAN-driven multi-objective convergence experiments.")
+    parser.add_argument(
+        "--mode",
+        choices=["legacy", "quick", "pilot", "full30", "reviewer"],
+        default="legacy",
+        help="Experiment mode. reviewer runs quick, pilot sensitivity, then full30.",
+    )
+    parser.add_argument("--results-subdir", default=None, help="Override output directory under 优化收敛对比.")
+    parser.add_argument("--moead-config", choices=list(MOEAD_CONFIGS), default=None)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    root = project_root()
+    set_seed(42)
+    ctx = build_context(root)
+
+    if args.mode == "reviewer":
+        configure_mode("quick", "results_quick")
+        if args.moead_config:
+            set_moead_config(args.moead_config)
+        run_formal_experiment(ctx, root, root / "\u4f18\u5316\u6536\u655b\u5bf9\u6bd4" / RESULTS_SUBDIR)
+
+        configure_mode("pilot", "results_pilot")
+        pilot_dir = root / "\u4f18\u5316\u6536\u655b\u5bf9\u6bd4" / RESULTS_SUBDIR
+        selected_config = run_moead_sensitivity(ctx, pilot_dir)
+
+        configure_mode("full30", "results")
+        set_moead_config(selected_config)
+        final_dir = root / "\u4f18\u5316\u6536\u655b\u5bf9\u6bd4" / RESULTS_SUBDIR
+        final_dir.mkdir(parents=True, exist_ok=True)
+        for name in [
+            "selected_baseline_config.json",
+            "baseline_sensitivity_summary.csv",
+            "baseline_sensitivity_runs.csv",
+        ]:
+            source = pilot_dir / name
+            if source.exists():
+                (final_dir / name).write_bytes(source.read_bytes())
+        run_formal_experiment(ctx, root, final_dir)
+        return
+
+    configure_mode(args.mode, args.results_subdir)
+    if args.moead_config:
+        set_moead_config(args.moead_config)
+    results_dir = root / "\u4f18\u5316\u6536\u655b\u5bf9\u6bd4" / RESULTS_SUBDIR
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.mode == "pilot":
+        run_moead_sensitivity(ctx, results_dir)
+    else:
+        maybe_load_selected_moead_config(results_dir)
+        run_formal_experiment(ctx, root, results_dir)
 
 
 if __name__ == "__main__":

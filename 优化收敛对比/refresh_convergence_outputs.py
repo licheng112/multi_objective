@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import matplotlib
@@ -71,9 +72,11 @@ def curve_stats(history: pd.DataFrame, metric: str) -> tuple[np.ndarray, dict[st
     for method in METHODS:
         sub = history[history["method"] == method]
         pivot = sub.pivot(index="generation", columns="seed", values=metric).loc[generations]
+        std = pivot.std(axis=1).fillna(0.0).to_numpy()
+        interval = 1.96 * std / np.sqrt(max(pivot.shape[1], 1)) if pivot.shape[1] >= 10 else std
         stats[method] = (
             pivot.mean(axis=1).to_numpy(),
-            pivot.std(axis=1).fillna(0.0).to_numpy(),
+            interval,
         )
     return generations, stats
 
@@ -202,18 +205,24 @@ def make_consistency_check(history: pd.DataFrame, metrics: pd.DataFrame, output_
     ]
     rows = []
     for metric, direction, values in checks:
-        best_method = values.idxmin() if direction == "min" else values.idxmax()
+        best_value = float(values.min() if direction == "min" else values.max())
+        tied_best = values[np.isclose(values.astype(float), best_value, rtol=1e-10, atol=1e-12)].index.tolist()
+        best_method = tied_best[0]
         our_value = float(values.loc[OURS])
-        best_value = float(values.loc[best_method])
+        tied = len(tied_best) > 1
         rows.append(
             {
                 "metric": metric,
                 "direction": direction,
-                "best_method": best_method,
+                "best_method": "; ".join(tied_best) if tied else best_method,
                 "ours_value": our_value,
                 "best_value": best_value,
-                "supports_main_claim": best_method == OURS,
-                "note": "consistent" if best_method == OURS else "local single-metric advantage; discuss with HV/IGD/KCSR/PAM",
+                "supports_main_claim": (OURS in tied_best) and not tied,
+                "note": (
+                    "tie; report as feasibility evidence only"
+                    if tied
+                    else ("consistent" if best_method == OURS else "local single-metric advantage; discuss as trade-off")
+                ),
             }
         )
     check_df = pd.DataFrame(rows)
@@ -252,6 +261,20 @@ def fmt(series: pd.Series, method: str) -> str:
     return f"{float(series.loc[method]):.4f}"
 
 
+def read_optional_csv(path: Path) -> pd.DataFrame | None:
+    return pd.read_csv(path) if path.exists() else None
+
+
+def selected_moead_note(out: Path) -> str:
+    path = out / "selected_baseline_config.json"
+    if not path.exists():
+        return "MOEA/D 使用默认参数配置；未检测到参数敏感性选择文件。"
+    selected = json.loads(path.read_text(encoding="utf-8"))
+    name = selected.get("selected_moead_config", "unknown")
+    rule = selected.get("selection_rule", "pilot sensitivity selection")
+    return f"MOEA/D 参数由 pilot 参数敏感性实验选出，最终配置为 `{name}`；选择规则：{rule}"
+
+
 def write_report(
     history: pd.DataFrame,
     metrics: pd.DataFrame,
@@ -270,6 +293,12 @@ def write_report(
     igd100 = metric_at_generation(history, igd_metric, 100)
     igd500 = metric_at_generation(history, igd_metric, 500)
     run_count = int(history["seed"].nunique())
+    seed_min = int(history["seed"].min())
+    seed_max = int(history["seed"].max())
+    interval_label = "95% CI" if run_count >= 10 else "standard deviation"
+    out = output_path.parent
+    tests = read_optional_csv(out / "statistical_tests.csv")
+    ranks = read_optional_csv(out / "average_rank_summary.csv")
 
     display_metrics = metrics.copy()
     for col in display_metrics.columns:
@@ -297,9 +326,10 @@ def write_report(
         "",
         "- 代理模型：KAN，输入 22 个关键工艺参数，输出 IV、DEG、CTA。",
         "- 对比方法：Knowledge-constrained NSGA-II、NSGA-II、NSGA-III、MOEA/D。",
-        f"- 迭代范围：0-500 代；随机种子重复次数：{run_count}。",
+        f"- 迭代范围：0-500 代；独立重复次数：{run_count}；随机种子范围：{seed_min}-{seed_max}。",
         "- 目标函数：F1=|Y_IV-50|，F2=|Y_DEG-1.37|，F3=|Y_CTA-51|。",
-        "- 正文收敛图直接使用逐代当前代非支配前沿均值及当前代 HV/IGD；不再进行累计最优、事件抽点、阶梯化或后处理扰动。",
+        f"- 正文收敛图直接使用逐代当前代非支配前沿均值及当前代 HV/IGD；曲线为 mean，阴影为 {interval_label}；不进行累计最优、事件抽点、阶梯化或后处理扰动。",
+        f"- {selected_moead_note(output_path.parent)}",
         "- 本文方法在 0-80 代保留较强全局探索，80-160 代逐步增强知识引导，160 代后进入稳定开发阶段。",
         "",
         "## 关键代数对比（当前代口径）",
@@ -320,11 +350,21 @@ def write_report(
         "",
         display_checks.to_markdown(index=False),
         "",
+        "## 统计检验与平均排名",
+        "",
+        "Wilcoxon 成对检验采用相同 seed 对齐，p 值经 Holm 校正；若校正后不显著，则只作为趋势性差异讨论。",
+        "",
+        tests.to_markdown(index=False, floatfmt=".4f") if tests is not None else "未检测到 statistical_tests.csv。",
+        "",
+        ranks.to_markdown(index=False, floatfmt=".4f") if ranks is not None else "未检测到 average_rank_summary.csv。",
+        "",
         "## 结果分析",
         "",
         "正文曲线展示当前代搜索状态，因此早期可能出现局部震荡或短暂退化；这是早期探索阶段的自然结果，而不是后处理平滑或人为扰动。",
         "",
-        "本文方法在 IV、DEG、HV、IGD 上整体更优，但 CTA 存在局部折中，说明知识引导并非对所有目标无条件最优。最终结论应结合 Average objective、HV、IGD、KCSR 和 PAM 共同判断，而不是只看单个目标。",
+        "本文方法的结论应表述为整体稳健优势，而不是所有单目标全面最优。本轮 30 次独立重复中，本文方法在 HV、IGD、PAM 以及 IV/DEG 偏差上具有更稳定优势；但 F3-CTA 的最优均值来自 NSGA-II，MOEA/D 在 CTA 上也保持局部竞争力，并且平均收敛代数较早。这些现象应作为多目标权衡保留并讨论。",
+        "",
+        "由于 KCSR 在四种方法上均为 1.0，该指标只能说明最终前沿均满足先验约束，不能作为区分本文方法优势的核心证据。最终判断应以集合质量、参数调整幅度、统计检验和单目标 trade-off 共同支撑。",
         "",
     ]
     lines.extend(

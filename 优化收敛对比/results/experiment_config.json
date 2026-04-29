@@ -1,10 +1,38 @@
 {
+  "run_mode": "full30",
   "population_size": 140,
   "generations": 500,
   "seeds": [
     42,
     43,
-    44
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71
   ],
   "methods": [
     "Knowledge-constrained NSGA-II",
@@ -12,6 +40,57 @@
     "NSGA-III",
     "MOEA/D"
   ],
+  "active_moead_config_name": "stable_decomposition",
+  "active_moead_config": {
+    "neighbors": 44,
+    "immigrant_start": 0.1,
+    "immigrant_end": 0.0,
+    "immigrant_decay_generation": 220,
+    "state_refresh_start": 0.04,
+    "state_refresh_end": 0.0
+  },
+  "moead_config_candidates": {
+    "default": {
+      "neighbors": 20,
+      "immigrant_start": 0.46,
+      "immigrant_end": 0.1,
+      "immigrant_decay_generation": 360,
+      "state_refresh_start": 0.2,
+      "state_refresh_end": 0.04
+    },
+    "low_immigrant": {
+      "neighbors": 24,
+      "immigrant_start": 0.25,
+      "immigrant_end": 0.04,
+      "immigrant_decay_generation": 320,
+      "state_refresh_start": 0.12,
+      "state_refresh_end": 0.02
+    },
+    "large_neighborhood": {
+      "neighbors": 36,
+      "immigrant_start": 0.34,
+      "immigrant_end": 0.06,
+      "immigrant_decay_generation": 360,
+      "state_refresh_start": 0.14,
+      "state_refresh_end": 0.02
+    },
+    "exploitative": {
+      "neighbors": 32,
+      "immigrant_start": 0.18,
+      "immigrant_end": 0.02,
+      "immigrant_decay_generation": 260,
+      "state_refresh_start": 0.08,
+      "state_refresh_end": 0.01
+    },
+    "stable_decomposition": {
+      "neighbors": 44,
+      "immigrant_start": 0.1,
+      "immigrant_end": 0.0,
+      "immigrant_decay_generation": 220,
+      "state_refresh_start": 0.04,
+      "state_refresh_end": 0.0
+    }
+  },
   "target_labels": [
     "IV",
     "DEG",

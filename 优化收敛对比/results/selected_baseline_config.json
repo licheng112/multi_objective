@@ -1,0 +1,26 @@
+{
+  "selected_moead_config": "stable_decomposition",
+  "selected_config": {
+    "neighbors": 44,
+    "immigrant_start": 0.1,
+    "immigrant_end": 0.0,
+    "immigrant_decay_generation": 220,
+    "state_refresh_start": 0.04,
+    "state_refresh_end": 0.0
+  },
+  "selection_rule": "Lowest mean rank across final Average objective, HV, and IGD on pilot seeds.",
+  "pilot_seeds": [
+    1001,
+    1002,
+    1003,
+    1004,
+    1005,
+    1006,
+    1007,
+    1008,
+    1009,
+    1010
+  ],
+  "pilot_generations": 220,
+  "elapsed_seconds": 213.52
+}

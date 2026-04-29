@@ -7,6 +7,8 @@ __pycache__/
 # Local runtime/cache outputs
 优化收敛对比/cache/
 优化收敛对比/__pycache__/
+优化收敛对比/results_quick/
+优化收敛对比/results_pilot/
 优化收敛对比/results/*.log
 优化收敛对比/results/*.err
 
