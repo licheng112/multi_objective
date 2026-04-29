@@ -1,0 +1,9 @@
+﻿metric,direction,best_method,ours_value,best_value,supports_main_claim,note
+F1-IV,min,Knowledge-constrained NSGA-II,0.0719735920429229,0.0719735920429229,True,consistent
+F2-DEG,min,Knowledge-constrained NSGA-II,0.0093356734141707,0.0093356734141707,True,consistent
+F3-CTA,min,NSGA-III,0.2861196200052897,0.2422459423542022,False,local single-metric advantage; discuss with HV/IGD/KCSR/PAM
+Average objective,min,NSGA-III,0.1224762996037801,0.1166141033172607,False,local single-metric advantage; discuss with HV/IGD/KCSR/PAM
+HV,max,Knowledge-constrained NSGA-II,0.8341666666666666,0.8341666666666666,True,consistent
+IGD,min,Knowledge-constrained NSGA-II,0.0104223667678864,0.0104223667678864,True,consistent
+KCSR,max,Knowledge-constrained NSGA-II,1.0,1.0,True,consistent
+PAM,min,Knowledge-constrained NSGA-II,0.0758233666419982,0.0758233666419982,True,consistent

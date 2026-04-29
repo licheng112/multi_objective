@@ -1,0 +1,66 @@
+{
+  "population_size": 140,
+  "generations": 500,
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "methods": [
+    "Knowledge-constrained NSGA-II",
+    "NSGA-II",
+    "NSGA-III",
+    "MOEA/D"
+  ],
+  "target_labels": [
+    "IV",
+    "DEG",
+    "CTA"
+  ],
+  "target_y": [
+    50.0,
+    1.3700000047683716,
+    51.0
+  ],
+  "objective_scale": [
+    0.8963775634765625,
+    0.10473001003265381,
+    1.9551898956298714
+  ],
+  "prior_suffixes": [
+    "TIC-10601.PV",
+    "PIC-11603.PV",
+    "PI-10525.PV",
+    "FIC-10406A.MV",
+    "LIC-10313.MV",
+    "DIC-10317.PV"
+  ],
+  "constraint_weight": 4.5,
+  "disturbance_scenarios": 9,
+  "disturbance_level": 0.075,
+  "robust_std_weight": 0.8,
+  "disturbance_risk_gain": 3.0,
+  "parameter_stability_weight": 0.75,
+  "baseline_immigrant_start": 0.46,
+  "baseline_immigrant_end": 0.1,
+  "baseline_immigrant_decay_generation": 360,
+  "baseline_state_refresh_start": 0.2,
+  "baseline_state_refresh_end": 0.04,
+  "prior_half_width_ratio": 0.24,
+  "prior_initial_fraction": 0.54,
+  "prior_center_initial_fraction": 0.06,
+  "prior_center_noise_ratio": 0.07,
+  "knowledge_strength_midpoint": 115,
+  "knowledge_strength_slope": 34,
+  "knowledge_pull_max": 0.18,
+  "knowledge_local_base": 0.2,
+  "knowledge_local_gain": 0.34,
+  "knowledge_prior_refresh_base": 0.08,
+  "knowledge_prior_refresh_gain": 0.1,
+  "knowledge_global_refresh_max": 0.16,
+  "knowledge_state_refresh_max": 0.12,
+  "early_exploration_end": 80,
+  "exploration_decay_end": 160,
+  "main_plot_note": "Main convergence figures directly use current-generation metrics without best-so-far, event sampling, staircase conversion, or post-hoc disturbance.",
+  "hv_igd_note": "HV and IGD use normalized constraint-aware objective values; raw F1/F2/F3 are still reported separately."
+}

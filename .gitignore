@@ -1,0 +1,28 @@
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Local runtime/cache outputs
+优化收敛对比/cache/
+优化收敛对比/__pycache__/
+优化收敛对比/results/*.log
+优化收敛对比/results/*.err
+
+# Large local data and third-party checkouts
+预测/data_1.csv
+预测/data_1_参数筛选_含三指标.csv
+预测/训练及结果/external/
+open_source_repos/
+pareto_outputs/
+
+# Local manuscript/drafts and extracted scratch text
+*.doc
+*.docx
+*.tmp
+_extracted_*.txt
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
